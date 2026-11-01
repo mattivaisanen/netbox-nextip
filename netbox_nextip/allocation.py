@@ -1,50 +1,55 @@
 """
-Which address an interface gets next.
+Which address a rule gives next. Reads only.
 
-The VLANs of an interface (its untagged VLAN, and its tagged VLANs when the
-tagged_vlans setting is on) each give one suggestion per address family. An
-interface with no VLAN of its own uses the VLANs of the interface at the
-other end of its cable (a server NIC takes the switch port's VLAN), with the
-cable_peer_vlans setting:
+1. The VLAN's IPv4 prefixes: active prefixes assigned to the rule's VLAN.
+2. The active IP ranges inside those prefixes, not marked populated (DHCP
+   pools). With ranges, the address comes from the first range (last, when
+   going downwards) that has one; when all are full there is none.
+3. Without ranges, from the prefix itself, leaving out the rule's
+   skip_first / skip_last addresses and every range in the prefix.
 
-1. The VLAN's prefixes: prefixes whose VLAN it is, with an allowed status
-   (and in the interface's VRF, with match_interface_vrf).
-2. The ranges inside those prefixes, with an allowed status and role. Ranges
-   marked populated (DHCP pools) never count.
-3. The first (or last) address of the first range that has one free. When
-   there is no range, the same from the prefix itself, skipping the network
-   and broadcast addresses, the configured addresses at either end and every
-   range in the prefix (one that does not count, such as a reserved range or
-   a DHCP pool of another role, is still not free to hand out).
+The first address of a prefix (network), the one after it (gateway) and
+the last (broadcast) are never handed out, also not from a range that
+covers them. /31 and /32 prefixes are used in full. A smaller prefix inside
+a VLAN prefix is not used through the bigger one: it belongs to another VLAN,
+or (same VLAN) it is used on its own, with its own mask.
 
-An address is free when no IP address object exists for it in the VRF.
-Nothing here writes.
+An address is used when an IP address object exists for it, whatever its
+status. Within a pool, the rule's order and fill_gaps decide which free
+address is next (see free_number()).
+
+An address typed in the Add IP popup is checked by check_address() instead:
+it must be in a prefix of the VLAN, free, and not a reserved address.
 """
 from dataclasses import dataclass
 
 import netaddr
+from django.utils.translation import gettext_lazy as _
 
-from ipam.models import IPRange, Prefix, VLAN
+from ipam.choices import IPRangeStatusChoices, PrefixStatusChoices
+from ipam.models import IPAddress, IPRange, Prefix
 
-from .settings import get_setting
+from .choices import AddressOrderChoices
 
-FIRST, LAST = 'first', 'last'
+# Why there is no address.
+NO_PREFIX = 'no-prefix'  # the VLAN has no active IPv4 prefix
+FULL = 'full'            # no free address in the order the rule asks for
 
-# Why a suggestion has no address.
-NO_PREFIX = 'no-prefix'  # the VLAN has no prefix of this family
-NO_RANGE = 'no-range'    # the VLAN has no range, and prefix_fallback is off
-FULL = 'full'            # every range (or the prefix) is in use
+# Why a typed address can't be used (check_address()), in words for the user.
+TYPED_PROBLEMS = {
+    'bad-address': _('not an IPv4 address'),
+    'not-in-vlan': _('the address is not in an active prefix of this VLAN'),
+    'reserved': _("the address is the prefix's network, gateway or broadcast address"),
+    'taken': _('the address is already in use'),
+}
 
 
 @dataclass
 class Suggestion:
-    vlan: VLAN
-    family: int
     address: str | None = None      # with the prefix's mask: '10.0.0.5/24'
     prefix: Prefix | None = None    # the VLAN prefix the address is in
     range: IPRange | None = None    # the range it came from, None when from the prefix
-    via: object = None              # the cabled interface whose VLAN it is, None when the interface's own
-    problem: str | None = None      # NO_PREFIX, NO_RANGE or FULL when there is no address
+    problem: str | None = None      # NO_PREFIX or FULL when there is no address
 
     @property
     def vrf(self):
@@ -56,163 +61,115 @@ class Suggestion:
         return source.tenant if source else None
 
 
-def interface_vlans(interface):
-    """The VLANs an interface takes addresses from, untagged first."""
-    vlans = [interface.untagged_vlan] if interface.untagged_vlan_id else []
-    if get_setting('tagged_vlans') and interface.pk:
-        vlans += [vlan for vlan in interface.tagged_vlans.order_by('vid') if vlan.pk != interface.untagged_vlan_id]
-    return vlans
-
-
-def vlan_source(interface):
-    """
-    (VLANs, via): the interface's own VLANs, or when it has none, those of
-    the interface at the other end of its cable (through patch panels), which
-    is then via. A VM interface or one cabled to anything but one interface
-    has only its own.
-    """
-    vlans = interface_vlans(interface)
-    if vlans or not get_setting('cable_peer_vlans'):
-        return vlans, None
-    peers = getattr(interface, 'connected_endpoints', None) or []
-    if len(peers) == 1 and isinstance(peers[0], type(interface)):
-        if peer_vlans := interface_vlans(peers[0]):
-            return peer_vlans, peers[0]
-    return [], None
-
-
-def suggest(interface, family=None, vlans=None):
-    """
-    One Suggestion per VLAN of the interface and address family. family
-    and vlans (VLAN pk's) narrow it down; by default every family in the
-    families setting and every VLAN. An empty list means the interface has
-    no VLAN (of those).
-    """
-    families = [family] if family else get_setting('families')
-    source, via = vlan_source(interface)
-    source = [vlan for vlan in source if vlans is None or vlan.pk in vlans]
-    vrf = interface.vrf if interface.vrf_id and get_setting('match_interface_vrf') else None
-    suggestions = [suggest_for_vlan(v, f, vrf) for v in source for f in families]
-    for suggestion in suggestions:
-        suggestion.via = via
-    return suggestions
-
-
-def first_free(suggestions):
-    """The first suggestion of each family that has an address."""
-    found = {}
-    for suggestion in suggestions:
-        if suggestion.address and suggestion.family not in found:
-            found[suggestion.family] = suggestion
-    return list(found.values())
-
-
-def suggest_for_vlan(vlan, family, vrf=None):
-    result = Suggestion(vlan=vlan, family=family)
-    prefixes = vlan_prefixes(vlan, family, vrf)
+def suggest(rule):
+    """The next address of the rule's VLAN, as a Suggestion."""
+    prefixes = [
+        prefix for prefix in Prefix.objects.filter(vlan=rule.vlan, status=PrefixStatusChoices.STATUS_ACTIVE)
+        .select_related('vrf', 'tenant').order_by('prefix')
+        if prefix.family == 4
+    ]
     if not prefixes:
-        result.problem = NO_PREFIX
-        return result
-    order = get_setting('order')
-
+        return Suggestion(problem=NO_PREFIX)
     ranges = [(prefix, iprange) for prefix in prefixes for iprange in prefix_ranges(prefix)]
-    if ranges:
-        if found := _first_found(ranges, order, range_address):
-            return found_in(result, *found)
-        if not get_setting('prefix_fallback_when_full'):
-            result.problem = FULL
-            return result
-    elif not get_setting('prefix_fallback'):
-        result.problem = NO_RANGE
-        return result
-
-    if found := _first_found([(prefix, None) for prefix in prefixes], order, prefix_address):
-        return found_in(result, *found)
-    result.problem = FULL
-    return result
-
-
-def _first_found(pools, order, pick):
-    """(prefix, range, address) of the first pool with a free address, in order."""
-    for prefix, iprange in (reversed(pools) if order == LAST else pools):
-        address = pick(iprange or prefix, order)
-        if address is not None:
-            return prefix, iprange, address
-    return None
-
-
-def found_in(result, prefix, iprange, address):
-    result.prefix, result.range = prefix, iprange
-    result.address = f'{address}/{prefix.prefix.prefixlen}'
-    return result
-
-
-def vlan_prefixes(vlan, family, vrf=None):
-    prefixes = Prefix.objects.filter(vlan=vlan, status__in=get_setting('prefix_statuses'))
-    if vrf is not None:
-        prefixes = prefixes.filter(vrf=vrf)
-    return [prefix for prefix in prefixes.select_related('vrf', 'tenant') if prefix.family == family]
+    pools = ranges or [(prefix, None) for prefix in prefixes]
+    if rule.order == AddressOrderChoices.BEFORE_FIRST:
+        pools.reverse()
+    for prefix, iprange in pools:
+        if iprange:
+            number = range_number(iprange, prefix, rule)
+        else:
+            number = prefix_number(prefix, rule)
+        if number is not None:
+            address = netaddr.IPAddress(number, version=4)
+            return Suggestion(address=f'{address}/{prefix.prefix.prefixlen}', prefix=prefix, range=iprange)
+    return Suggestion(problem=FULL)
 
 
 def prefix_ranges(prefix):
-    """The ranges in a prefix that count as the VLAN's, in address order."""
-    ranges = prefix.get_child_ranges(status__in=get_setting('range_statuses'), mark_populated=False)
-    if roles := get_setting('range_roles'):
-        ranges = ranges.filter(role__slug__in=roles)
-    return list(ranges.select_related('tenant').order_by('start_address'))
-
-
-def range_address(iprange, order):
-    """The free address of a range (netaddr.IPAddress), or None."""
-    first, last = int(iprange.start_address.ip), int(iprange.end_address.ip)
-    taken = _taken(iprange.get_child_ips(), first, last)
-    return _as_address(free_number(first, last, taken, order), iprange.family)
-
-
-def prefix_address(prefix, order):
-    """The free address of a prefix (netaddr.IPAddress), or None."""
-    first, last = usable_bounds(prefix)
-    first += get_setting('prefix_skip_first')
-    last -= get_setting('prefix_skip_last')
-    taken = _taken(prefix.get_child_ips(), first, last)
-    for iprange in prefix.get_child_ranges():
-        taken.append((int(iprange.start_address.ip), int(iprange.end_address.ip)))
-    return _as_address(free_number(first, last, taken, order), prefix.family)
-
-
-def usable_bounds(prefix):
     """
-    First and last usable address of a prefix, as numbers. Like NetBox:
-    IPv4 leaves out the network and broadcast addresses, IPv6 the
-    subnet-router anycast address; pools, IPv4 /31-/32 and IPv6
-    /127-/128 are usable in full.
+    The active, not populated ranges in a prefix, in address order. A range
+    inside a smaller prefix belongs to that one, not to this prefix.
+    """
+    ranges = prefix.get_child_ranges(status=IPRangeStatusChoices.STATUS_ACTIVE, mark_populated=False)
+    children = child_prefixes(prefix)
+    return [
+        iprange for iprange in ranges.select_related('vrf', 'tenant').order_by('start_address')
+        if not any(start <= int(iprange.start_address.ip) and int(iprange.end_address.ip) <= end
+                   for start, end in children)
+    ]
+
+
+def range_number(iprange, prefix, rule):
+    first, last = int(iprange.start_address.ip), int(iprange.end_address.ip)
+    used = _used(iprange.get_child_ips(), first, last)
+    taken = [(n, n) for n in used] + reserved(prefix) + child_prefixes(prefix)
+    return free_number(first, last, taken, used, rule.order, rule.fill_gaps)
+
+
+def prefix_number(prefix, rule):
+    first, last = prefix.prefix.first, prefix.prefix.last
+    if reserved(prefix):
+        first, last = first + 2, last - 1  # after the network address and gateway, before broadcast
+    first += rule.skip_first
+    last -= rule.skip_last
+    # Every range in the prefix is off limits, also reserved ones and DHCP pools, and so is every
+    # smaller prefix inside it.
+    blocks = [(int(r.start_address.ip), int(r.end_address.ip)) for r in prefix.get_child_ranges()]
+    blocks += child_prefixes(prefix)
+    # Addresses inside those do not move "the last used address" of the prefix.
+    used = [
+        n for n in _used(prefix.get_child_ips(), first, last)
+        if not any(start <= n <= end for start, end in blocks)
+    ]
+    taken = [(n, n) for n in used] + blocks + reserved(prefix)
+    return free_number(first, last, taken, used, rule.order, rule.fill_gaps)
+
+
+def child_prefixes(prefix):
+    """
+    The parts of a prefix taken by smaller prefixes inside it, as (start, end)
+    intervals. A child prefix of another VLAN (or of none) belongs elsewhere.
+    One of the same VLAN is a pool of its own (suggest() goes through it with
+    its own mask and reserved addresses), so it is left out here too.
+    """
+    return [(child.prefix.first, child.prefix.last) for child in prefix.get_child_prefixes().only('prefix')]
+
+
+def reserved(prefix):
+    """
+    The addresses of a prefix never handed out, as (start, end) intervals:
+    the network address and the gateway after it, and the broadcast address.
+    None for /31 and /32, where every address is a host.
     """
     network = prefix.prefix
-    first, last = network.first, network.last
-    if prefix.is_pool or network.prefixlen >= (31 if network.version == 4 else 127):
-        return first, last
-    if network.version == 4:
-        return first + 1, last - 1
-    return first + 1, last
+    if network.prefixlen >= 31:
+        return []
+    return [(network.first, network.first + 1), (network.last, network.last)]
 
 
-def _taken(ip_addresses, first, last):
-    """Existing addresses between first and last, as (n, n) intervals."""
+def _used(ip_addresses, first, last):
+    """Numbers of the existing addresses from first to last."""
     numbers = (int(address.ip) for address in ip_addresses.values_list('address', flat=True))
-    return [(n, n) for n in numbers if first <= n <= last]
+    return [n for n in numbers if first <= n <= last]
 
 
-def _as_address(number, family):
-    return None if number is None else netaddr.IPAddress(number, version=family)
-
-
-def free_number(first, last, taken, order=FIRST):
+def free_number(first, last, taken, used, order, fill_gaps):
     """
-    The lowest (FIRST) or highest (LAST) number from first to last that is
-    in none of the taken (start, end) intervals, or None. Intervals may
-    overlap and stick out of the bounds.
+    The next free number from first to last, or None.
+
+    taken: (start, end) intervals that are not free; they may overlap and
+    stick out of the bounds. used: the used addresses. Without fill_gaps,
+    AFTER_LAST only looks above the highest used address and BEFORE_FIRST
+    below the lowest, so gaps between used addresses stay empty. Then the
+    lowest (AFTER_LAST) or highest (BEFORE_FIRST) free number wins.
     """
-    if order == LAST:
+    downwards = order == AddressOrderChoices.BEFORE_FIRST
+    if used and not fill_gaps:
+        if downwards:
+            last = min(last, min(used) - 1)
+        else:
+            first = max(first, max(used) + 1)
+    if downwards:
         candidate = last
         for start, end in sorted(taken, key=lambda interval: interval[1], reverse=True):
             if end < candidate:
@@ -225,3 +182,52 @@ def free_number(first, last, taken, order=FIRST):
             break
         candidate = max(candidate, end + 1)
     return candidate if candidate <= last else None
+
+
+def parse_address(text):
+    """
+    The IPv4 address typed in the popup ('10.0.0.5', a mask is ignored), as a
+    netaddr.IPAddress, or None when it is empty or not an IPv4 address.
+    """
+    text = (text or '').strip().split('/')[0]
+    try:
+        address = netaddr.IPAddress(text, version=4, flags=netaddr.INET_PTON)
+    except (netaddr.AddrFormatError, ValueError, TypeError):
+        return None
+    return address
+
+
+def containing_prefixes(address):
+    """The active prefixes that hold address (a netaddr.IPAddress), the smallest first."""
+    prefixes = Prefix.objects.filter(
+        status=PrefixStatusChoices.STATUS_ACTIVE, prefix__net_contains_or_equals=str(address),
+    ).select_related('vlan', 'vrf', 'tenant')
+    return sorted(prefixes, key=lambda prefix: prefix.prefix.prefixlen, reverse=True)
+
+
+def check_address(vlan, text):
+    """
+    The address typed in the popup, as a Suggestion for the VLAN: with the
+    mask of the VLAN's smallest prefix that holds it, or a problem (a key
+    of TYPED_PROBLEMS). Free means the same as for suggest(): no IP address
+    object in the prefix's VRF and not in a populated range.
+    """
+    address = parse_address(text)
+    if address is None:
+        return Suggestion(problem='bad-address')
+    prefix = next((prefix for prefix in containing_prefixes(address) if prefix.vlan_id == vlan.pk), None)
+    number = int(address)
+    # Inside a smaller prefix of another VLAN (one of the same VLAN would have been found first).
+    if prefix is None or any(start <= number <= end for start, end in child_prefixes(prefix)):
+        return Suggestion(problem='not-in-vlan')
+    if any(start <= number <= end for start, end in reserved(prefix)):
+        return Suggestion(problem='reserved', prefix=prefix)
+    populated = prefix.get_child_ranges(mark_populated=True)
+    if IPAddress.objects.filter(vrf=prefix.vrf, address__net_host=str(address)).exists() or any(
+        int(r.start_address.ip) <= number <= int(r.end_address.ip) for r in populated
+    ):
+        return Suggestion(problem='taken', prefix=prefix)
+    iprange = next((
+        r for r in prefix_ranges(prefix) if int(r.start_address.ip) <= number <= int(r.end_address.ip)
+    ), None)
+    return Suggestion(address=f'{address}/{prefix.prefix.prefixlen}', prefix=prefix, range=iprange)

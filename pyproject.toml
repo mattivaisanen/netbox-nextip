@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netbox-nextip"
-version = "0.2.0"
-description = "Suggest the IP address of a NetBox device or VM and assign it in one click."
+version = "0.3.0"
+description = "Add the next free IP address to a NetBox device or VM in one click, following admin rules."
 requires-python = ">=3.10"
 license = "Apache-2.0"
 readme = "README.md"

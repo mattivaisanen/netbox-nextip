@@ -1,116 +1,143 @@
 """
-Which address a device or VM gets, and on which interface: the suggestion
-on the device page and what its Assign button creates.
+What the Add IP button of a device or VM would do: which rule, which
+interface and which address. Shown on the device page and done by
+assign.py. Reads only.
 
-The SuggestionRule for the device decides whether it gets one at all, and
-from which VLANs. For each address family it has no primary IP of:
-
-1. An interface in a VLAN (its own, or the cabled switch port's) gives the
-   address: management-only interfaces first, then the rule's interface
-   name, then the rest in name order. With VLANs on the rule, only those
-   VLANs count, so a switch's access ports don't hand out user addresses.
-2. Otherwise the address comes from the rule's VLANs, the ones available at
-   the device's site (or VLAN group scope), and goes on the rule's
-   interface name, else the management-only interface, else the device's
-   only interface. With none of those, Assign creates the named interface.
-
-Nothing here writes.
+The interface: a device or VM with exactly one interface gets the address
+there, when it can take the rule's VLAN without losing its own (see
+takes_vlan()). Otherwise a new interface named by the rule's template (or
+the existing one with that name).
 """
+import copy
 from dataclasses import dataclass
 
-from ipam.models import VLAN
+from dcim.choices import InterfaceModeChoices
+from ipam.models import VLAN, IPRange, Prefix
 
-from .allocation import first_free, suggest, suggest_for_vlan
-from .models import SuggestionRule
-from .settings import get_setting
+from . import naming
+from .allocation import TYPED_PROBLEMS, Suggestion, check_address, suggest
+from .models import IPRule
 
-NO_VLAN = 'no-vlan'  # no interface is in a VLAN, and the rule names none available here
+# Why the interface can't be used.
+NO_NAME = 'no-name'                # every {n} name is in use
+INTERFACE_IN_USE = 'in-use'        # the named interface is in another VLAN, a trunk, disabled or a LAG member
+BAD_TEMPLATE = 'bad-template'      # the rule's name templates fail today's checks (saved before them)
 
 
 @dataclass
 class Plan:
-    family: int
-    rule: SuggestionRule
-    interface: object = None    # an existing interface, or None: create interface_name
-    interface_name: str = ''
-    suggestion: object = None   # an allocation.Suggestion
-    problem: str | None = None  # NO_VLAN, or the suggestion's problem
+    rule: IPRule
+    interface_name: str | None
+    interface: object | None = None     # the existing interface to use, or None: create one
+    suggestion: Suggestion | None = None
+    problem: str | None = None      # NO_NAME, INTERFACE_IN_USE or the suggestion's problem
 
     @property
     def address(self):
-        return self.suggestion.address if self.suggestion else None
+        return None if self.problem else self.suggestion.address
+
+    @property
+    def problem_text(self):
+        """Why a typed address can't be used, in words; None for other problems."""
+        return TYPED_PROBLEMS.get(self.problem)
 
 
-def plan_for(obj):
+def plan_for(obj, vlan=None, address=None):
     """
-    One Plan per family in the families setting that the device or VM has no
-    primary IP of. An empty list when no rule matches or nothing is missing.
+    The Plan for a device or VM, or None when it has a primary IPv4 or no
+    rule matches. With vlan (picked in the Add IP popup), the matching rule
+    is used when it has that VLAN, otherwise the default rule for that VLAN
+    (default_rule()). With address (typed in the popup), that address is
+    checked and used instead of the next free one.
     """
-    rule = SuggestionRule.for_object(obj)
+    if obj.primary_ip4_id:
+        return None
+    rule = IPRule.for_object(obj)
+    if vlan is not None and (rule is None or rule.vlan_id != vlan.pk):
+        rule = default_rule(obj, vlan)
     if rule is None:
-        return []
-    interfaces = list(obj.interfaces.select_related('untagged_vlan', 'vrf'))
-    plans = []
-    for family in get_setting('families'):
-        if not getattr(obj, f'primary_ip{family}_id'):
-            plans.append(from_interfaces(rule, interfaces, family) or from_rule(obj, rule, interfaces, family))
-    return plans
-
-
-def from_interfaces(rule, interfaces, family):
-    """The Plan from an interface's own VLAN, or None when no interface is in one."""
-    allowed = {vlan.pk for vlan in rule.vlans.all()} or None
-    first_problem = None
-    for interface in sorted(interfaces, key=lambda i: preference(i, rule)):
-        suggestions = suggest(interface, family=family, vlans=allowed)
-        if not suggestions:
-            continue
-        plan = Plan(family, rule, interface, interface.name, suggestions[0])
-        if found := first_free(suggestions):
-            plan.suggestion = found[0]
-            return plan
-        first_problem = first_problem or plan
-    if first_problem:
-        first_problem.problem = first_problem.suggestion.problem
-    return first_problem
-
-
-def from_rule(obj, rule, interfaces, family):
-    """The Plan from the rule's VLANs, on the interface the rule picks."""
-    interface = pick_interface(interfaces, rule.interface_name)
-    plan = Plan(family, rule, interface, interface.name if interface else rule.interface_name)
-    vlans = available_vlans(obj, rule)
-    if not vlans:
-        plan.problem = NO_VLAN
-        return plan
-    vrf = interface.vrf if interface and interface.vrf_id and get_setting('match_interface_vrf') else None
-    suggestions = [suggest_for_vlan(vlan, family, vrf) for vlan in vlans]
-    found = first_free(suggestions)
-    plan.suggestion = found[0] if found else suggestions[0]
-    plan.problem = plan.suggestion.problem
+        return None
+    interfaces = {interface.name: interface for interface in obj.interfaces.all()}
+    suggestion = check_address(rule.vlan, address) if address else suggest(rule)
+    if naming.check_interface_name(rule.interface_name) or naming.check_dns_name(rule.dns_name):
+        # A rule saved before the template checks got stricter: say so rather than make a junk name.
+        return Plan(rule, None, suggestion=suggestion, problem=BAD_TEMPLATE)
+    if len(interfaces) == 1:
+        only = next(iter(interfaces.values()))
+        if takes_vlan(only, rule.vlan_id):
+            return Plan(rule, only.name, interface=only, suggestion=suggestion, problem=suggestion.problem)
+    name = naming.interface_name(rule, interfaces)
+    plan = Plan(rule, name, interface=interfaces.get(name), suggestion=suggestion)
+    if name is None:
+        plan.problem = NO_NAME
+    elif plan.interface and not takes_vlan(plan.interface, rule.vlan_id):
+        plan.problem = INTERFACE_IN_USE
+    else:
+        plan.problem = plan.suggestion.problem
     return plan
 
 
-def preference(interface, rule):
-    """Sort key: management-only first, then the rule's interface name, then name order."""
-    return not getattr(interface, 'mgmt_only', False), interface.name != rule.interface_name
+def takes_vlan(interface, vlan_id):
+    """
+    True when the interface may get vlan_id as its untagged VLAN: it has it
+    already, or it is not an 802.1Q trunk and has no untagged VLAN yet. A
+    trunk (tagged, tagged all, Q-in-Q) is never changed, because setting its
+    untagged VLAN would change the native VLAN of an uplink. A disabled
+    interface or a LAG member is never used.
+    """
+    if not interface.enabled or getattr(interface, 'lag_id', None):
+        return False
+    if interface.untagged_vlan_id == vlan_id:
+        return True
+    return interface.untagged_vlan_id is None and interface.mode in ('', None, InterfaceModeChoices.MODE_ACCESS)
 
 
-def pick_interface(interfaces, name):
-    """The interface called name, else the management-only one, else the only one, else None."""
-    for test in (lambda i: i.name == name, lambda i: getattr(i, 'mgmt_only', False)):
-        if match := next((i for i in interfaces if test(i)), None):
-            return match
-    return interfaces[0] if len(interfaces) == 1 else None
+def default_rule(obj, vlan):
+    """
+    An unsaved rule with every default, for the Add IP popup of a device no
+    rule matches: the address after the last used one in the VLAN, on the
+    only interface or a new Vlan<vid> interface, made primary.
+    """
+    return IPRule(name='', object_type=obj._meta.model_name, vlan=vlan)
 
 
-def available_vlans(obj, rule):
-    """The rule's VLANs that the device or VM can use (by site, VLAN group scope or global)."""
-    pks = [vlan.pk for vlan in rule.vlans.all()]
-    if not pks:
-        return []
-    if obj._meta.model_name == 'device':
-        vlans = VLAN.objects.get_for_device(obj)
-    else:
-        vlans = VLAN.objects.get_for_virtualmachine(obj)
-    return list(vlans.filter(pk__in=pks).order_by('vid'))
+def placed(obj, site=None, location=None):
+    """
+    A copy of obj (not saved) with the given site and location, to ask which
+    VLANs it could use there. Unchanged fields stay as they are; obj itself
+    is not touched (Django copies the instance state and its cache).
+    """
+    probe = copy.copy(obj)
+    if site is not None:
+        probe.site = site
+    if location is not None and hasattr(probe, 'location'):
+        probe.location = location
+    return probe
+
+
+def view_flags(plan, user):
+    """
+    Template flags: may the user see the plan's VLAN and the prefix or range
+    the address comes from? Object permissions count, not only model ones.
+    """
+    if plan is None:
+        return {'can_view_vlan': False, 'can_view_prefix': False}
+    suggestion = plan.suggestion
+    source = suggestion and (suggestion.range or suggestion.prefix)
+    source_model = IPRange if suggestion and suggestion.range else Prefix
+    return {
+        'can_view_vlan': VLAN.objects.restrict(user, 'view').filter(pk=plan.rule.vlan_id).exists(),
+        'can_view_prefix': bool(source) and source_model.objects.restrict(user, 'view').filter(pk=source.pk).exists(),
+    }
+
+
+def is_device(obj):
+    """True for a device, False for a virtual machine."""
+    return obj._meta.model_name == 'device'
+
+
+def available_vlans(obj):
+    """The VLANs NetBox lets the device or VM use (by site, location, cluster and VLAN group scope)."""
+    if is_device(obj):
+        return VLAN.objects.get_for_device(obj)
+    return VLAN.objects.get_for_virtualmachine(obj)

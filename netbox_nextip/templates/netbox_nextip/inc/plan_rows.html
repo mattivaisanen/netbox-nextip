@@ -1,0 +1,36 @@
+{% load i18n %}
+{# The rows that describe a plan.Plan: shared by the device card and the popup preview. #}
+<tr>
+  <th scope="row">{% trans "Rule" %}</th>
+  <td>
+    {% if plan.rule.pk %}{% if perms.netbox_nextip.view_iprule %}<a href="{{ plan.rule.get_absolute_url }}">{{ plan.rule }}</a>{% else %}{{ plan.rule }}{% endif %}
+    {% elif plan %}<span class="text-muted">{% trans "none, VLAN picked here" %}</span>
+    {% else %}<span class="text-muted">{% trans "none matches" %}</span>{% endif %}
+  </td>
+</tr>
+{% if plan %}
+{# VLAN and prefix only for users who may see these objects (views.view_flags()); the address is what the button adds. #}
+{% if can_view_vlan %}
+<tr><th scope="row">{% trans "VLAN" %}</th><td><a href="{{ plan.rule.vlan.get_absolute_url }}">{{ plan.rule.vlan }}</a>{% if plan.rule.vlan.group %} <span class="text-muted small">({{ plan.rule.vlan.group }})</span>{% endif %}</td></tr>
+{% endif %}
+<tr>
+  <th scope="row">{% trans "Next IP" %}</th>
+  <td>
+    {% if plan.address %}<span class="font-monospace">{{ plan.address }}</span>{% if plan.suggestion.prefix and can_view_prefix %} <span class="text-muted small">{% trans "from" %} {{ plan.suggestion.range|default:plan.suggestion.prefix }}</span>{% endif %}
+    {% elif plan.problem_text %}<span class="text-danger">{{ form.address }}: {{ plan.problem_text }}</span>
+    {% elif plan.problem == 'no-prefix' %}<span class="text-danger">{% trans "the VLAN has no active IPv4 prefix" %}</span>
+    {% elif plan.problem == 'in-use' %}<span class="text-danger">{% blocktrans with name=plan.interface_name %}interface {{ name }} is in another VLAN, a trunk, disabled or a LAG member{% endblocktrans %}</span>
+    {% elif plan.problem == 'bad-template' %}<span class="text-danger">{% trans "the rule's interface or DNS name template is no longer valid; edit the rule" %}</span>
+    {% elif plan.problem == 'no-name' %}<span class="text-danger">{% trans "no free interface name for the rule's template" %}</span>
+    {% else %}<span class="text-danger">{% trans "no free address" %}</span>{% if not plan.rule.fill_gaps %} <span class="text-muted small">{% trans "(gaps between used addresses are not filled)" %}</span>{% endif %}{% endif %}
+  </td>
+</tr>
+<tr>
+  <th scope="row">{% trans "Interface" %}</th>
+  <td>
+    {% if plan.interface %}<a href="{{ plan.interface.get_absolute_url }}">{{ plan.interface }}</a>
+    {% elif plan.interface_name %}<span class="font-monospace">{{ plan.interface_name }}</span> <span class="badge text-bg-secondary">{% trans "new" %}</span>
+    {% else %}<span class="text-muted">&mdash;</span>{% endif %}
+  </td>
+</tr>
+{% endif %}

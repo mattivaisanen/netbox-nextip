@@ -1,0 +1,21 @@
+{% load i18n %}
+{# "Add IP address" in the device's button bar. Same actions as the Next IP card. #}
+{% if not plan %}
+  <button type="button" class="btn btn-primary" hx-get="{{ popup_url }}" hx-target="#htmx-modal-content"
+          data-bs-toggle="modal" data-bs-target="#htmx-modal">
+    <i class="mdi mdi-ip-network" aria-hidden="true"></i> {% trans "Add IP address" %}…
+  </button>
+{% elif plan.address %}
+  <form method="post" action="{{ add_url }}" class="d-inline">
+    {% csrf_token %}
+    <input type="hidden" name="address" value="{{ plan.address }}">
+    <button type="submit" class="btn btn-primary"
+            title="{% blocktrans with address=plan.address name=plan.interface_name %}Add {{ address }} on {{ name }}{% endblocktrans %}">
+      <i class="mdi mdi-ip-network" aria-hidden="true"></i> {% trans "Add IP address" %}
+    </button>
+  </form>
+{% else %}
+  <button type="button" class="btn btn-primary" disabled title="{% trans 'The IP rule gives no address; see the Next IP card.' %}">
+    <i class="mdi mdi-ip-network" aria-hidden="true"></i> {% trans "Add IP address" %}
+  </button>
+{% endif %}

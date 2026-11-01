@@ -1,14 +1,25 @@
+import django_filters
 from django.db.models import Q
 
+from dcim.models import Location, Region, Site, SiteGroup
+from ipam.models import VLAN
 from netbox.filtersets import NetBoxModelFilterSet
 
-from .models import SuggestionRule
+from .choices import RuleObjectChoices
+from .models import IPRule
 
 
-class SuggestionRuleFilterSet(NetBoxModelFilterSet):
+class IPRuleFilterSet(NetBoxModelFilterSet):
+    object_type = django_filters.MultipleChoiceFilter(choices=RuleObjectChoices)
+    vlan_id = django_filters.ModelMultipleChoiceFilter(field_name='vlan', queryset=VLAN.objects.all())
+    region_id = django_filters.ModelMultipleChoiceFilter(field_name='region', queryset=Region.objects.all())
+    site_group_id = django_filters.ModelMultipleChoiceFilter(field_name='site_group', queryset=SiteGroup.objects.all())
+    site_id = django_filters.ModelMultipleChoiceFilter(field_name='site', queryset=Site.objects.all())
+    location_id = django_filters.ModelMultipleChoiceFilter(field_name='location', queryset=Location.objects.all())
+
     class Meta:
-        model = SuggestionRule
-        fields = ('id', 'name', 'priority', 'enabled', 'interface_name')
+        model = IPRule
+        fields = ('id', 'name', 'priority', 'enabled', 'interface_name', 'order', 'fill_gaps')
 
     def search(self, queryset, name, value):
         if not value.strip():

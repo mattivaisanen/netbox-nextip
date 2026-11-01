@@ -1,0 +1,46 @@
+{% load i18n %}
+{% load form_helpers %}
+{# Content of NetBox's htmx modal. Every change of a field loads it again with the new values #}
+{# (not the CSRF token: it would end up in the access log). #}
+<form method="post" action="{{ add_url }}" hx-get="{{ popup_url }}" hx-trigger="change" hx-target="#htmx-modal-content"
+      hx-params="not csrfmiddlewaretoken,address">
+  {% csrf_token %}
+  {# Tells Add IP to use these answers, also when a rule matches. #}
+  <input type="hidden" name="popup" value="1">
+  {% if plan.address %}<input type="hidden" name="address" value="{{ plan.address }}">{% endif %}
+  <div class="modal-header">
+    <h5 class="modal-title">{% blocktrans with object=object %}Add IP to {{ object }}{% endblocktrans %}</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+  </div>
+  <div class="modal-body">
+    <p class="text-muted small">
+      {% if rule %}{% trans "Pick another VLAN, or type the address. Left as it is, Add IP does what the rule says." %}
+      {% else %}{% trans "No IP rule matches. Narrow down by site, location and VLAN group, then pick the VLAN the address comes from, or type the address." %}{% endif %}
+    </p>
+    {% if object.site %}<p class="mb-2"><span class="text-secondary">{% trans "Site" %}:</span> {{ object.site }}</p>{% endif %}
+    {% for field in form.visible_fields %}{% render_field field %}{% endfor %}
+    {% for field in form.hidden_fields %}{{ field }}{% endfor %}
+    {% if form.address_note %}<div class="alert alert-warning py-1 small">{{ form.address_note }}</div>{% endif %}
+    <h6 class="mt-3">{% trans "What Add IP will do" %}</h6>
+    <table class="table table-sm attr-table mb-0">
+      {% if object.primary_ip4 %}
+        <tr><td class="text-muted">{% blocktrans with ip=object.primary_ip4 %}Nothing to add: the primary IPv4 is {{ ip }} already.{% endblocktrans %}</td></tr>
+      {% elif plan %}
+        {% include 'netbox_nextip/inc/plan_rows.html' %}
+      {% else %}
+        <tr><th scope="row">{% trans "Waiting for" %}</th><td class="text-muted">{{ waiting|join:", " }}</td></tr>
+      {% endif %}
+    </table>
+    {% if plan.address %}<div class="form-text">
+      {% if plan.rule.make_primary %}{% trans "The address becomes the primary IP." %}{% endif %}
+      {% if form.address %}{% trans "It is checked again when you add it: if someone took it in the meantime, nothing is added." %}
+      {% else %}{% trans "It is confirmed when you add it: if someone took it in the meantime, the next free one is used." %}{% endif %}
+    </div>{% endif %}
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+    <button type="submit" class="btn btn-primary"{% if not plan.address %} disabled{% endif %}>
+      <i class="mdi mdi-plus-thick"></i> {% trans "Add IP" %}
+    </button>
+  </div>
+</form>

@@ -1,65 +1,68 @@
-from urllib.parse import urlencode
-
-from django.urls import reverse
-
+from ipam.models import IPAddress
 from netbox.plugins import PluginTemplateExtension
 
-from .allocation import suggest_for_vlan
-from .assign import permissions_for
-from .plan import plan_for
-from .settings import get_setting
+from .assign import permissions_for, urls_for
+from .plan import is_device, plan_for, view_flags
 
 
 class DeviceNextIP(PluginTemplateExtension):
     """
-    The suggested IP at the top of a device or VM page, with an Assign
-    button that creates it and makes it primary (views.AssignView). Shown
-    only when a suggestion rule matches and the device lacks a primary IP.
+    The "Next IP" card on a device or VM without a primary IPv4: its rule,
+    VLAN, the address and interface Add IP would create, and the button
+    (views.AddIPView). When no rule matches, the button opens the Add IP
+    popup instead (views.AddIPPopupView), for users who may add addresses.
     """
     models = ('dcim.device', 'virtualization.virtualmachine')
 
-    def alerts(self):
-        if not get_setting('device_panel'):
-            return ''
-        obj = self.context['object']
-        plans = plan_for(obj)
-        if not plans:
-            return ''
-        return self.render('netbox_nextip/inc/device_panel.html', extra_context={
-            'plans': plans,
-            'assign_url': reverse(f'plugins:netbox_nextip:assign_{obj._meta.model_name}', args=[obj.pk]),
-            'assignable': any(plan.address for plan in plans),
-            'can_assign': self.context['request'].user.has_perms(permissions_for(obj)),
-        })
-
-
-class VLANNextIP(PluginTemplateExtension):
-    """
-    The "Next free IP" panel on a VLAN: the next address per family. Add
-    opens NetBox's IP address form with it filled in.
-    """
-    models = ('ipam.vlan',)
-
     def right_page(self):
-        if not get_setting('vlan_panel'):
+        obj = self.context['object']
+        if obj.primary_ip4_id:
             return ''
-        vlan = self.context['object']
-        suggestions = [suggest_for_vlan(vlan, family) for family in get_setting('families')]
-        for suggestion in suggestions:
-            suggestion.add_url = add_url(suggestion, vlan.get_absolute_url()) if suggestion.address else None
-        return self.render('netbox_nextip/inc/vlan_panel.html', extra_context={
-            'suggestions': suggestions,
+        plan = self.plan(obj)
+        can_add = self.context['request'].user.has_perms(permissions_for(obj))
+        if plan is None and not can_add:
+            return ''
+        add_url, popup_url = urls_for(obj)
+        return self.render('netbox_nextip/inc/device_panel.html', extra_context={
+            'plan': plan,
+            'add_url': add_url,
+            'popup_url': popup_url,
+            'can_add': can_add,
+            **view_flags(plan, self.context['request'].user),
         })
 
+    def buttons(self):
+        """
+        "Add IP address" in the button bar, next to Add Components, while no
+        interface of the device or VM has an IP address yet.
+        """
+        obj = self.context['object']
+        if obj.primary_ip4_id or not self.context['request'].user.has_perms(permissions_for(obj)):
+            return ''
+        if IPAddress.objects.filter(**{f'{interface_field(obj)}__in': obj.interfaces.all()}).exists():
+            return ''
+        add_url, popup_url = urls_for(obj)
+        return self.render('netbox_nextip/inc/add_ip_button.html', extra_context={
+            'plan': self.plan(obj),
+            'add_url': add_url,
+            'popup_url': popup_url,
+        })
 
-def add_url(suggestion, return_url):
-    """NetBox's IP address form, filled in with the suggestion."""
-    params = {'address': suggestion.address, 'status': get_setting('ip_status'), 'return_url': return_url}
-    if suggestion.vrf:
-        params['vrf'] = suggestion.vrf.pk
-    if suggestion.tenant:
-        params['tenant'] = suggestion.tenant.pk
-    return f"{reverse('ipam:ipaddress_add')}?{urlencode(params)}"
+    def plan(self, obj):
+        """
+        plan_for(obj), worked out once per page: the card and the button
+        both need it, and it reads every used address of the VLAN.
+        """
+        plans = self.context['request'].__dict__.setdefault('_nextip_plans', {})
+        key = (obj._meta.label_lower, obj.pk)
+        if key not in plans:
+            plans[key] = plan_for(obj)
+        return plans[key]
 
 
-template_extensions = [DeviceNextIP, VLANNextIP]
+def interface_field(obj):
+    """The IPAddress relation to the interfaces of a device or a VM."""
+    return 'interface' if is_device(obj) else 'vminterface'
+
+
+template_extensions = [DeviceNextIP]
