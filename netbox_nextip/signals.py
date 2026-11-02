@@ -1,7 +1,7 @@
 """
-Keep rules from widening by themselves. A rule's device types and clusters
-are many-to-many fields: when the last one is deleted, the empty list would
-mean "any type" (or "any cluster"). Such a rule is disabled first, with a
+Keep rules from widening by themselves. A rule's device types, roles and
+clusters are many-to-many fields: when the last one is deleted, the empty
+list would mean "any type" (or "any role", "any cluster"). Such a rule is disabled first, with a
 change log entry saying why.
 
 Two ways a deletion reaches a rule:
@@ -24,7 +24,7 @@ try:
     from core.signals import _signals_received
 except ImportError:  # a later NetBox renamed it: only the delete receivers below are left
     _signals_received = None
-from dcim.models import DeviceType
+from dcim.models import DeviceRole, DeviceType
 from virtualization.models import Cluster
 
 from .models import IPRule
@@ -32,8 +32,15 @@ from .models import IPRule
 # Rule field -> (model of its entries, word for the change log message).
 LIST_FIELDS = {
     'device_types': (DeviceType, _('device type')),
+    'roles': (DeviceRole, _('role')),
     'clusters': (Cluster, _('cluster')),
 }
+
+# Entry model -> rule field.
+FIELD_OF_MODEL = {model: field for field, (model, _word) in LIST_FIELDS.items()}
+
+# m2m through table -> rule field.
+FIELD_OF_THROUGH = {getattr(IPRule, field).through: field for field in LIST_FIELDS}
 
 
 # Rules that list an object being deleted, per thread: (field, object pk, rule pk).
@@ -41,23 +48,25 @@ _pending = local()
 
 
 @receiver(pre_delete, sender=DeviceType)
+@receiver(pre_delete, sender=DeviceRole)
 @receiver(pre_delete, sender=Cluster)
 def entry_deleting(sender, instance, **kwargs):
     """Note the enabled rules that list instance; entry_deleted() checks them once the rows are gone."""
-    field = 'device_types' if sender is DeviceType else 'clusters'
+    field = FIELD_OF_MODEL[sender]
     pending = _pending.__dict__.setdefault('rules', set())
     for pk in IPRule.objects.filter(enabled=True, **{field: instance}).values_list('pk', flat=True):
         pending.add((field, instance.pk, pk))
 
 
 @receiver(post_delete, sender=DeviceType)
+@receiver(post_delete, sender=DeviceRole)
 @receiver(post_delete, sender=Cluster)
 def entry_deleted(sender, instance, **kwargs):
     """
     Disable the noted rules whose list is empty now. Checked after the delete,
     so a bulk delete of all of a rule's entries at once is caught too.
     """
-    field = 'device_types' if sender is DeviceType else 'clusters'
+    field = FIELD_OF_MODEL[sender]
     pending = _pending.__dict__.setdefault('rules', set())
     entries = {entry for entry in pending if entry[:2] == (field, instance.pk)}
     pending.difference_update(entries)
@@ -68,12 +77,13 @@ def entry_deleted(sender, instance, **kwargs):
 
 
 @receiver(m2m_changed, sender=IPRule.device_types.through)
+@receiver(m2m_changed, sender=IPRule.roles.through)
 @receiver(m2m_changed, sender=IPRule.clusters.through)
 def rule_list_changed(sender, instance, action, reverse, pk_set, **kwargs):
     """A rule's list lost its last entry because that entry is being deleted (not because of an edit)."""
     if action != 'post_remove' or reverse or not isinstance(instance, IPRule) or not instance.enabled:
         return
-    field = 'device_types' if sender is IPRule.device_types.through else 'clusters'
+    field = FIELD_OF_THROUGH[sender]
     if getattr(instance, field).exists():
         return  # other entries are left, so the rule does not widen
     model = LIST_FIELDS[field][0]

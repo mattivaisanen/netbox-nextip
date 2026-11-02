@@ -21,8 +21,8 @@ class RuleTests(TestCase):
         maker = Manufacturer.objects.create(name='Maker', slug='maker')
         cls.ap = DeviceType.objects.create(manufacturer=maker, model='AP', slug='ap')
         cls.switch = DeviceType.objects.create(manufacturer=maker, model='Switch', slug='switch')
-        role = DeviceRole.objects.create(name='Network', slug='network')
-        cls.device = Device.objects.create(name='ap1', site=cls.site, device_type=cls.ap, role=role)
+        cls.role = DeviceRole.objects.create(name='Network', slug='network')
+        cls.device = Device.objects.create(name='ap1', site=cls.site, device_type=cls.ap, role=cls.role)
         cls.vlan = VLAN.objects.create(vid=110, name='Mgmt')
         Prefix.objects.create(prefix='10.1.10.0/24', vlan=cls.vlan)
         IPAddress.objects.create(address='10.1.10.5/24')
@@ -53,6 +53,15 @@ class RuleTests(TestCase):
         self.rule('switches', region=self.city).device_types.set([self.switch])
         plan = plan_for(self.device)
         self.assertEqual((plan.rule, plan.interface_name, plan.address), (city, 'Vlan110', '10.1.10.6/24'))
+
+    def test_role_rule(self):
+        """A rule with roles only matches devices of those roles, and beats one without roles."""
+        printers = DeviceRole.objects.create(name='Printer', slug='printer')
+        self.rule('any-role', region=self.city)
+        network = self.rule('network', region=self.city)
+        network.roles.set([self.role])
+        self.rule('printers', region=self.city, priority=1).roles.set([printers])
+        self.assertEqual(IPRule.for_object(self.device), network)
 
     @override_settings(LOGIN_REQUIRED=True, EXEMPT_VIEW_PERMISSIONS=['*'])
     def test_add_ip(self):

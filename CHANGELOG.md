@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- IP Rules can be limited to device roles (*Roles*, for device and VM
+  rules). Empty means any role. A rule with roles wins over one without at
+  equal priority and scope. A rule whose last role is deleted is disabled.
+  Run `manage.py migrate netbox_nextip`.
+
 ## 0.3.0 (2026-11-01)
 
 The plugin is rebuilt around IP rules. Rules and settings of earlier

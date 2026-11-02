@@ -1,7 +1,7 @@
 import django_filters
 from django.db.models import Q
 
-from dcim.models import Location, Region, Site, SiteGroup
+from dcim.models import DeviceRole, Location, Region, Site, SiteGroup
 from ipam.models import VLAN
 from netbox.filtersets import NetBoxModelFilterSet
 
@@ -11,6 +11,7 @@ from .models import IPRule
 
 class IPRuleFilterSet(NetBoxModelFilterSet):
     object_type = django_filters.MultipleChoiceFilter(choices=RuleObjectChoices)
+    role_id = django_filters.ModelMultipleChoiceFilter(field_name='roles', queryset=DeviceRole.objects.all())
     vlan_id = django_filters.ModelMultipleChoiceFilter(field_name='vlan', queryset=VLAN.objects.all())
     region_id = django_filters.ModelMultipleChoiceFilter(field_name='region', queryset=Region.objects.all())
     site_group_id = django_filters.ModelMultipleChoiceFilter(field_name='site_group', queryset=SiteGroup.objects.all())

@@ -7,7 +7,7 @@ from .serializers import IPRuleSerializer
 
 class IPRuleViewSet(NetBoxModelViewSet):
     queryset = IPRule.objects.select_related('vlan', 'region', 'site_group', 'site', 'location').prefetch_related(
-        'device_types', 'clusters', 'tags',
+        'device_types', 'roles', 'clusters', 'tags',
     )
     serializer_class = IPRuleSerializer
     filterset_class = IPRuleFilterSet

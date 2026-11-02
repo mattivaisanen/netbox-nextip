@@ -11,7 +11,7 @@ How the plugin works and why, for anyone changing it.
 | `plan.py` | `plan_for()`: for a device or VM with no primary IPv4, the rule, the interface (new or existing) and the address. Reads only. |
 | `allocation.py` | Which address: the VLAN's prefixes and ranges, the reserved addresses of a prefix, and `free_number()`. Reads only. |
 | `naming.py` | The interface name and DNS name templates. |
-| `signals.py` | Disables a rule when its last device type or cluster is deleted (connected in `NextIPConfig.ready()`). With a request, NetBox's own `pre_delete` handler removes the entry from the rule first, so `rule_list_changed()` (m2m `post_remove`) tells a deletion from an edit by NetBox's internal `core.signals._signals_received.pre_delete`. |
+| `signals.py` | Disables a rule when its last device type, role or cluster is deleted (connected in `NextIPConfig.ready()`). With a request, NetBox's own `pre_delete` handler removes the entry from the rule first, so `rule_list_changed()` (m2m `post_remove`) tells a deletion from an edit by NetBox's internal `core.signals._signals_received.pre_delete`. |
 | `assign.py` | `assign()`: what Add IP does. Plans again under the available-ips lock, creates or updates the interface, creates the address, sets the primary IP, then checks object permissions. |
 | `template_content.py`, `templates/.../inc/device_panel.html`, `inc/plan_rows.html` | The *Next IP* card on device and VM pages (`right_page()`). |
 | `templates/.../inc/add_ip_button.html` | *Add IP address* in the button bar (`buttons()`), while no interface has an IP. |
@@ -25,7 +25,8 @@ Everything a rule decides is a field on the rule, so there are no
 
 `for_object()` loads the enabled rules of the object's kind, sorts them by
 priority, then `scope_depth()` (location, site, site group, region, a deeper
-tree node first, then rules with device types or clusters), then name, and
+tree node first, then rules with device types or clusters, then rules with
+roles), then name, and
 returns the first that `matches()`. The cheap field checks run first; the
 last check asks NetBox whether the object may use the rule's VLAN
 (`VLAN.objects.get_for_device()` / `get_for_virtualmachine()`), so a rule
@@ -36,7 +37,7 @@ Regions, site groups and locations are ltree models in NetBox 4.7;
 backends have.
 
 A rule must have a region, a VLAN from a VLAN group with a scope, or (VM
-rules) clusters. Clusters and device types are many-to-many and not saved
+rules) clusters. Roles do not count as scope. Clusters and device types are many-to-many and not saved
 when `clean()` runs on a new rule, so those checks live in
 `related_errors()`, called by `IPRuleForm.clean()` and
 `IPRuleSerializer.validate()`.

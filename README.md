@@ -23,9 +23,10 @@ stands for either.
   Otherwise a new interface is created from the rule's name template, with
   the rule's interface type and management-only flag. Either way the
   interface gets the rule's VLAN as its untagged VLAN.
-- **Rules per device type and place.** A rule is for devices (optionally
-  only some device types) or virtual machines (optionally only some
-  clusters), narrowed by region, site group, site and location. The
+- **Rules per device type, role and place.** A rule is for devices
+  (optionally only some device types) or virtual machines (optionally only
+  some clusters), optionally only some roles, narrowed by region, site
+  group, site and location. The
   narrowest matching rule wins at equal priority.
 - **Picks the address the rule asks for.** From the IP ranges inside the
   VLAN's prefix, or from the prefix when it has no range. Upwards after the
@@ -105,6 +106,7 @@ so no rule applies everywhere by accident. All fields are described in
 | --- | --- |
 | Applies to | Devices or virtual machines. |
 | Device types, clusters | Optional. Only devices of these types, or VMs in these clusters. |
+| Roles | Optional. Only devices or VMs with one of these roles. |
 | Region, site group, site, location | Optional. Where the rule applies. Child regions, groups and locations match too. |
 | VLAN | The VLAN the address comes from. A device that may not use the VLAN never matches. |
 | Interface name | Template for a new interface: `{vid}`, `{vlan}` and `{n}` (lowest free number from 0). Default `Vlan{vid}`. |

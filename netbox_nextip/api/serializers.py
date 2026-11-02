@@ -1,10 +1,10 @@
 from rest_framework import serializers
 
 from dcim.api.serializers import (
-    DeviceTypeSerializer, LocationSerializer, RegionSerializer, SiteGroupSerializer, SiteSerializer,
+    DeviceRoleSerializer, DeviceTypeSerializer, LocationSerializer, RegionSerializer, SiteGroupSerializer, SiteSerializer,
 )
 from ipam.api.serializers import VLANSerializer
-from dcim.models import DeviceType
+from dcim.models import DeviceRole, DeviceType
 from netbox.api.fields import SerializedPKRelatedField
 from netbox.api.serializers import NetBoxModelSerializer
 from virtualization.api.serializers import ClusterSerializer
@@ -17,6 +17,9 @@ class IPRuleSerializer(NetBoxModelSerializer):
     # Written as a list of IDs, shown as nested objects (NetBox's own pattern for many-to-many fields).
     device_types = SerializedPKRelatedField(
         queryset=DeviceType.objects.all(), serializer=DeviceTypeSerializer, nested=True, many=True, required=False,
+    )
+    roles = SerializedPKRelatedField(
+        queryset=DeviceRole.objects.all(), serializer=DeviceRoleSerializer, nested=True, many=True, required=False,
     )
     clusters = SerializedPKRelatedField(
         queryset=Cluster.objects.all(), serializer=ClusterSerializer, nested=True, many=True, required=False,
@@ -31,7 +34,7 @@ class IPRuleSerializer(NetBoxModelSerializer):
         model = IPRule
         fields = (
             'id', 'url', 'display_url', 'display', 'name', 'priority', 'enabled', 'description', 'object_type',
-            'device_types', 'clusters', 'region', 'site_group', 'site', 'location', 'vlan', 'interface_name',
+            'device_types', 'clusters', 'roles', 'region', 'site_group', 'site', 'location', 'vlan', 'interface_name',
             'interface_type', 'mgmt_only', 'order', 'fill_gaps', 'skip_first', 'skip_last', 'ip_status',
             'ip_role', 'dns_name', 'make_primary', 'tags', 'custom_fields', 'created', 'last_updated',
         )

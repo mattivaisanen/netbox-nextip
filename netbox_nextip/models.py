@@ -39,6 +39,10 @@ class IPRule(NetBoxModel):
         to='dcim.DeviceType', verbose_name=_('device types'), related_name='+', blank=True,
         help_text=_('Devices of one of these types. Empty: any type.'),
     )
+    roles = models.ManyToManyField(
+        to='dcim.DeviceRole', verbose_name=_('roles'), related_name='+', blank=True,
+        help_text=_('Devices or virtual machines with one of these roles. Empty: any role.'),
+    )
     clusters = models.ManyToManyField(
         to='virtualization.Cluster', verbose_name=_('clusters'), related_name='+', blank=True,
         help_text=_('Virtual machines in one of these clusters. Empty: any cluster.'),
@@ -190,7 +194,8 @@ class IPRule(NetBoxModel):
         """
         Sort key part: narrower scopes first. Location before site, site group
         and region, deeper in the tree before higher up, and a rule with device
-        types or clusters before one without. A rule with none of the place
+        types or clusters before one without, then one with roles before one
+        without. A rule with none of the place
         fields counts with the scope of its VLAN's group, so a rule whose VLAN
         group is scoped to one location is not taken for the broadest one.
         """
@@ -210,6 +215,7 @@ class IPRule(NetBoxModel):
             location is None, depth(location), site is None,
             site_group is None, depth(site_group), region is None, depth(region),
             not (self.device_types.all() or self.clusters.all() or cluster),
+            not self.roles.all(),
         )
 
     def matches(self, obj):
@@ -219,6 +225,9 @@ class IPRule(NetBoxModel):
         if not self.has_scope(has_clusters=bool(self.clusters.all())):
             # The scope was lost after the rule was saved (its VLAN group lost its scope, or the VLAN
             # left the group): never apply it everywhere.
+            return False
+        roles = {r.pk for r in self.roles.all()}
+        if roles and obj.role_id not in roles:
             return False
         if self.for_devices:
             types = {t.pk for t in self.device_types.all()}
@@ -252,7 +261,7 @@ class IPRule(NetBoxModel):
         """The rule for a device or VM, or None."""
         rules = cls.objects.filter(enabled=True, object_type=obj._meta.model_name).select_related(
             'vlan__group__scope_type', 'region', 'site_group', 'site', 'location',
-        ).prefetch_related('device_types', 'clusters')
+        ).prefetch_related('device_types', 'roles', 'clusters')
         rules = sorted(rules, key=lambda rule: (rule.priority, rule.scope_depth(), rule.name))
         return next((rule for rule in rules if rule.matches(obj)), None)
 

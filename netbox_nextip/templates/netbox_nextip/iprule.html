@@ -30,6 +30,10 @@
           <td>{% for cluster in object.clusters.all %}{{ cluster|linkify }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="text-muted">{% trans "Any" %}</span>{% endfor %}</td>
         </tr>
         {% endif %}
+        <tr>
+          <th scope="row">{% trans "Roles" %}</th>
+          <td>{% for role in object.roles.all %}{{ role|linkify }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="text-muted">{% trans "Any" %}</span>{% endfor %}</td>
+        </tr>
         <tr><th scope="row">{% trans "Region" %}</th><td>{{ object.region|linkify|placeholder }}</td></tr>
         <tr><th scope="row">{% trans "Site group" %}</th><td>{{ object.site_group|linkify|placeholder }}</td></tr>
         <tr><th scope="row">{% trans "Site" %}</th><td>{{ object.site|linkify|placeholder }}</td></tr>
