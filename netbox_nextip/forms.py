@@ -26,6 +26,9 @@ class IPRuleForm(NetBoxModelForm):
     device_types = DynamicModelMultipleChoiceField(
         queryset=DeviceType.objects.all(), required=False, label=_('Device types'), help_text=_help('device_types'),
     )
+    roles = DynamicModelMultipleChoiceField(
+        queryset=DeviceRole.objects.all(), required=False, label=_('Roles'), help_text=_help('roles'),
+    )
     clusters = DynamicModelMultipleChoiceField(
         queryset=Cluster.objects.all(), required=False, label=_('Clusters'), help_text=_help('clusters'),
     )
@@ -49,7 +52,7 @@ class IPRuleForm(NetBoxModelForm):
 
     fieldsets = (
         FieldSet('name', 'priority', 'enabled', 'description', name=_('Rule')),
-        FieldSet('object_type', 'device_types', 'clusters', name=_('Applies to')),
+        FieldSet('object_type', 'device_types', 'clusters', 'roles', name=_('Applies to')),
         FieldSet('region', 'site_group', 'site', 'location', name=_('Scope')),
         FieldSet('vlan', 'interface_name', 'interface_type', 'mgmt_only', name=_('Interface')),
         FieldSet('order', 'fill_gaps', 'skip_first', 'skip_last', name=_('Address')),
@@ -67,7 +70,7 @@ class IPRuleForm(NetBoxModelForm):
             'object_type': HTMXSelect(),
         }
         fields = (
-            'name', 'priority', 'enabled', 'description', 'object_type', 'device_types', 'clusters', 'region',
+            'name', 'priority', 'enabled', 'description', 'object_type', 'device_types', 'clusters', 'roles', 'region',
             'site_group', 'site', 'location', 'vlan', 'interface_name', 'interface_type', 'mgmt_only', 'order',
             'fill_gaps', 'skip_first', 'skip_last', 'ip_status', 'ip_role', 'dns_name', 'make_primary', 'tags',
         )
@@ -77,6 +80,9 @@ class IPRuleForm(NetBoxModelForm):
         self.for_vms = get_field_value(self, 'object_type') == RuleObjectChoices.VIRTUAL_MACHINE
         for name in self.DEVICE_ONLY if self.for_vms else self.VM_ONLY:
             del self.fields[name]
+        if self.for_vms:
+            # Only offer roles NetBox allows on virtual machines.
+            self.fields['roles'].widget.add_query_param('vm_role', 'true')
 
     def clean(self):
         super().clean()
@@ -102,12 +108,13 @@ class IPRuleFilterForm(NetBoxModelFilterSetForm):
     model = IPRule
     fieldsets = (
         FieldSet('q', 'filter_id', 'tag'),
-        FieldSet('enabled', 'object_type', 'vlan_id', 'region_id', 'site_id', name=_('Rule')),
+        FieldSet('enabled', 'object_type', 'role_id', 'vlan_id', 'region_id', 'site_id', name=_('Rule')),
     )
     enabled = forms.NullBooleanField(required=False, label=_('Enabled'), widget=forms.Select(choices=(
         ('', '---------'), ('true', _('Yes')), ('false', _('No')),
     )))
     object_type = forms.MultipleChoiceField(choices=RuleObjectChoices, required=False, label=_('Applies to'))
+    role_id = DynamicModelMultipleChoiceField(queryset=DeviceRole.objects.all(), required=False, label=_('Role'))
     vlan_id = DynamicModelMultipleChoiceField(queryset=VLAN.objects.all(), required=False, label=_('VLAN'))
     region_id = DynamicModelMultipleChoiceField(queryset=Region.objects.all(), required=False, label=_('Region'))
     site_id = DynamicModelMultipleChoiceField(queryset=Site.objects.all(), required=False, label=_('Site'))

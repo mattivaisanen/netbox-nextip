@@ -19,6 +19,7 @@ Every field of an IP rule, and what it does. Rules are edited under
 | Applies to | *Devices* or *Virtual machines*. The form only shows the fields that kind of rule uses: clusters for VM rules; device types, location, interface type and management only for device rules. |
 | Device types | Device rules: only these types. Empty: any. |
 | Clusters | VM rules: only VMs in these clusters. Empty: any. |
+| Roles | Only devices or VMs with one of these roles. Empty: any. VM rules only offer roles marked for virtual machines. |
 
 ## Scope
 
@@ -36,14 +37,15 @@ A VM's site is its own site field.
 
 A rule that loses its scope later (its VLAN's group loses its scope, or the
 VLAN leaves the group) matches nothing; the rule page says so. A rule whose
-last device type or cluster is deleted is disabled, so it doesn't turn into
-"any type". A region, site group, site or location a rule names can't be
+last device type, role or cluster is deleted is disabled, so it doesn't turn
+into "any type". A region, site group, site or location a rule names can't be
 deleted; edit or delete the rule first.
 
 When several enabled rules match, the lowest priority wins. With equal
 priority, the narrowest scope wins: location, then site, then site group,
 then region (a deeper region or group before its parent), then a rule with
-device types or clusters before one without. Then the name. A rule with none
+device types or clusters before one without, then a rule with roles before
+one without. Then the name. A rule with none
 of these place fields counts with the scope of its VLAN's group.
 
 ## Interface

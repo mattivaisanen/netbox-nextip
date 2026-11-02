@@ -127,7 +127,7 @@ class VirtualMachineAddIPPopupView(AddIPPopupView):
 @register_model_view(IPRule, 'list', path='', detail=False)
 class IPRuleListView(generic.ObjectListView):
     queryset = IPRule.objects.select_related('vlan', 'region', 'site_group', 'site', 'location').prefetch_related(
-        'device_types', 'clusters',
+        'device_types', 'roles', 'clusters',
     )
     filterset = filtersets.IPRuleFilterSet
     filterset_form = forms.IPRuleFilterForm
