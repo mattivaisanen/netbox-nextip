@@ -1,13 +1,24 @@
 name: Test
 
 # Pull requests and manual runs only, one job, to save Actions minutes.
+# Docs-only changes are not tested.
 on:
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   workflow_dispatch:
+
+# A new push to the same pull request cancels the run still going.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       # Oldest supported release (min_version in netbox_nextip/__init__.py).
       NETBOX_REF: v4.7.0
@@ -80,10 +91,6 @@ jobs:
       - name: Run migrations
         working-directory: netbox/netbox
         run: python manage.py migrate
-
-      - name: Collect static files
-        working-directory: netbox/netbox
-        run: python manage.py collectstatic --no-input
 
       - name: Check for migration drift
         working-directory: netbox/netbox

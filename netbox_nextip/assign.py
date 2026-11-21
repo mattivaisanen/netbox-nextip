@@ -26,13 +26,8 @@ from netbox.constants import ADVISORY_LOCK_KEYS
 from virtualization.models import VMInterface
 
 from . import naming
+from .integrations import change_approval_context
 from .plan import is_device, plan_for
-
-try:
-    # Optional: the change approval plugin groups requests that share a batch ID into one approval.
-    from netbox_change_approval.context import batch_scope, current_batch
-except ImportError:
-    batch_scope = current_batch = None
 
 
 def permissions_for(obj):
@@ -122,7 +117,11 @@ def approval_batch():
     as a bulk action), nothing changes. A change set the user has open still
     takes them all in, as it does with any change.
     """
-    if batch_scope is None or current_batch.get() is not None:
+    context = change_approval_context()
+    if context is None:
+        return nullcontext()
+    batch_scope, current_batch = context
+    if current_batch.get() is not None:
         return nullcontext()
     return batch_scope(uuid4())
 

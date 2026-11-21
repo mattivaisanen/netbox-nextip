@@ -57,7 +57,9 @@ class AddIPView(ConditionalLoginRequiredMixin, View):
         if shown and shown != str(ip.address):
             text += ' ' + _('{shown} was taken in the meantime.').format(shown=shown)
         if getattr(ip, 'primary_held', False):
-            text += ' ' + _('Making it the primary IP is waiting for approval; until then, Add IP adds another address.')
+            text += ' ' + _(
+                'Making it the primary IP is waiting for approval; until then, Add IP adds another address.'
+            )
             messages.warning(request, text)
         else:
             messages.success(request, text)

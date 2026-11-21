@@ -1,10 +1,15 @@
 from rest_framework import serializers
 
 from dcim.api.serializers import (
-    DeviceRoleSerializer, DeviceTypeSerializer, LocationSerializer, RegionSerializer, SiteGroupSerializer, SiteSerializer,
+    DeviceRoleSerializer,
+    DeviceTypeSerializer,
+    LocationSerializer,
+    RegionSerializer,
+    SiteGroupSerializer,
+    SiteSerializer,
 )
-from ipam.api.serializers import VLANSerializer
 from dcim.models import DeviceRole, DeviceType
+from ipam.api.serializers import VLANSerializer
 from netbox.api.fields import SerializedPKRelatedField
 from netbox.api.serializers import NetBoxModelSerializer
 from virtualization.api.serializers import ClusterSerializer

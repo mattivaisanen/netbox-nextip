@@ -12,10 +12,10 @@ import copy
 from dataclasses import dataclass
 
 from dcim.choices import InterfaceModeChoices
-from ipam.models import VLAN, IPRange, Prefix
+from ipam.models import IPRange, Prefix, VLAN
 
 from . import naming
-from .allocation import TYPED_PROBLEMS, Suggestion, check_address, suggest
+from .allocation import check_address, suggest, Suggestion, TYPED_PROBLEMS
 from .models import IPRule
 
 # Why the interface can't be used.

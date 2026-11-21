@@ -23,11 +23,15 @@ class NextIPConfig(PluginConfig):
     # Everything is set per rule in the UI; there are no PLUGINS_CONFIG settings.
     default_settings = {}
 
+    # Named explicitly rather than left to NetBox's default resource paths.
+    menu_items = 'navigation.menu_items'
     template_extensions = 'template_content.template_extensions'
 
     def ready(self):
         super().ready()
-        from . import signals  # noqa: F401 (connects the receivers)
+        from . import signals
+
+        signals.connect()
 
 
 config = NextIPConfig
