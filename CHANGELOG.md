@@ -2,10 +2,21 @@
 
 ## Unreleased
 
+New:
+
+- `manage.py prepare_nextip_uninstall` removes NetBox's rows about IP
+  rules (change log, tags, bookmarks, ...) before the plugin is taken out.
+  See "Uninstalling" in the README.
 - IP Rules can be limited to device roles (*Roles*, for device and VM
   rules). Empty means any role. A rule with roles wins over one without at
   equal priority and scope. A rule whose last role is deleted is disabled.
   Run `manage.py migrate netbox_nextip`.
+
+Fixed:
+
+- netbox-change-approval is only used when it is in `PLUGINS`, not merely
+  installed.
+- The *IP Rules* menu entry and its *Add* button are translated.
 
 ## 0.3.0 (2026-11-01)
 

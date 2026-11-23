@@ -11,12 +11,13 @@ Two ways a deletion reaches a rule:
   catches that case.
 - Without one (scripts, shell), the list rows just go with the object:
   entry_deleting() notes the rules before, entry_deleted() checks them after.
+
+The receivers are connected by connect(), called from NextIPConfig.ready().
 """
 from threading import local
 
 from django.contrib.contenttypes.models import ContentType
 from django.db.models.signals import m2m_changed, post_delete, pre_delete
-from django.dispatch import receiver
 from django.utils.translation import gettext as _
 
 try:
@@ -47,9 +48,6 @@ FIELD_OF_THROUGH = {getattr(IPRule, field).through: field for field in LIST_FIEL
 _pending = local()
 
 
-@receiver(pre_delete, sender=DeviceType)
-@receiver(pre_delete, sender=DeviceRole)
-@receiver(pre_delete, sender=Cluster)
 def entry_deleting(sender, instance, **kwargs):
     """Note the enabled rules that list instance; entry_deleted() checks them once the rows are gone."""
     field = FIELD_OF_MODEL[sender]
@@ -58,9 +56,6 @@ def entry_deleting(sender, instance, **kwargs):
         pending.add((field, instance.pk, pk))
 
 
-@receiver(post_delete, sender=DeviceType)
-@receiver(post_delete, sender=DeviceRole)
-@receiver(post_delete, sender=Cluster)
 def entry_deleted(sender, instance, **kwargs):
     """
     Disable the noted rules whose list is empty now. Checked after the delete,
@@ -76,9 +71,6 @@ def entry_deleted(sender, instance, **kwargs):
             disable(rule, field, instance)
 
 
-@receiver(m2m_changed, sender=IPRule.device_types.through)
-@receiver(m2m_changed, sender=IPRule.roles.through)
-@receiver(m2m_changed, sender=IPRule.clusters.through)
 def rule_list_changed(sender, instance, action, reverse, pk_set, **kwargs):
     """A rule's list lost its last entry because that entry is being deleted (not because of an edit)."""
     if action != 'post_remove' or reverse or not isinstance(instance, IPRule) or not instance.enabled:
@@ -104,3 +96,16 @@ def disable(rule, field, deleted):
         kind=LIST_FIELDS[field][1], name=deleted,
     )
     rule.save()
+
+
+def connect():
+    """Connect the receivers above. Each has a dispatch_uid, so a second call does nothing."""
+    for model, _word in LIST_FIELDS.values():
+        name = model._meta.model_name
+        pre_delete.connect(entry_deleting, sender=model, dispatch_uid=f'netbox_nextip:{name}_deleting')
+        post_delete.connect(entry_deleted, sender=model, dispatch_uid=f'netbox_nextip:{name}_deleted')
+    for field in LIST_FIELDS:
+        m2m_changed.connect(
+            rule_list_changed, sender=getattr(IPRule, field).through,
+            dispatch_uid=f'netbox_nextip:rule_{field}_changed',
+        )

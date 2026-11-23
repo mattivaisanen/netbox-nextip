@@ -8,17 +8,38 @@ version = "0.3.0"
 description = "Add the next free IP address to a NetBox device or VM in one click, following admin rules."
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 readme = "README.md"
 authors = [{ name = "Matti" }]
 # No runtime dependencies beyond NetBox (which brings Django). NetBox
 # versions are enforced at runtime by min_version in netbox_nextip/__init__.py.
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/mattivaisanen/netbox-nextip"
+Documentation = "https://github.com/mattivaisanen/netbox-nextip/tree/main/docs"
+Changelog = "https://github.com/mattivaisanen/netbox-nextip/blob/main/CHANGELOG.md"
+
 [tool.setuptools.packages.find]
 include = ["netbox_nextip*"]
 
 [tool.setuptools.package-data]
-netbox_nextip = [
-    "templates/netbox_nextip/*.html",
-    "templates/netbox_nextip/**/*.html",
-]
+netbox_nextip = ["templates/**/*.html"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# pycodestyle errors, pyflakes and import order.
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["netbox_nextip"]
+# Plain alphabetical order inside an import (IPAddress before VLAN).
+order-by-type = false
+# NetBox's own packages (top-level modules inside NetBox) get their own group,
+# after Django and before this plugin's imports.
+section-order = ["future", "standard-library", "third-party", "netbox", "first-party", "local-folder"]
+
+[tool.ruff.lint.isort.sections]
+netbox = ["core", "dcim", "extras", "ipam", "netbox", "tenancy", "users", "utilities", "virtualization"]

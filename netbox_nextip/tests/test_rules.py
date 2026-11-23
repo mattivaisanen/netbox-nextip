@@ -1,10 +1,15 @@
 """Which rule a device gets, and what Add IP creates."""
+from io import StringIO
+
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.test import TestCase, override_settings
+from django.core.management import call_command
+from django.test import override_settings, TestCase
 from django.urls import reverse
 
+from core.models import ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Interface, Manufacturer, Region, Site
+from extras.models import Tag
 from ipam.models import IPAddress, Prefix, VLAN, VLANGroup
 
 from ..assign import assign
@@ -129,7 +134,8 @@ class RuleTests(TestCase):
         self.assertRegex(page.content.decode(), rf'value="{self.vlan.pk}"\s+selected')
         self.assertContains(page, '10.1.10.50/24')
         for taken in ('10.1.10.5', '10.1.10.1', '10.1.10.255', '10.9.9.9'):
-            self.assertNotContains(self.client.get(popup, {'vlan': self.vlan.pk, 'ip_address': taken}), 'name="address"')
+            page = self.client.get(popup, {'vlan': self.vlan.pk, 'ip_address': taken})
+            self.assertNotContains(page, 'name="address"')
 
         url = reverse('plugins:netbox_nextip:add_ip_device', args=[self.device.pk])
         self.client.post(url, {'popup': '1', 'vlan': self.vlan.pk, 'ip_address': '10.1.10.5'})
@@ -137,3 +143,19 @@ class RuleTests(TestCase):
         self.client.post(url, {'popup': '1', 'ip_address': '10.1.10.50'})
         self.device.refresh_from_db()
         self.assertEqual(str(self.device.primary_ip4.address), '10.1.10.50/24')
+
+    def test_prepare_uninstall(self):
+        """Tag assignments and tags only for IP rules go; the rule and other objects stay."""
+        rule = self.rule('city', region=self.city)
+        only_rules = Tag.objects.create(name='Rules only', slug='rules-only')
+        only_rules.object_types.set([ObjectType.objects.get_for_model(IPRule)])
+        shared = Tag.objects.create(name='Shared', slug='shared')
+        rule.tags.add(only_rules, shared)
+        self.device.tags.add(shared)
+
+        call_command('prepare_nextip_uninstall', interactive=False, stdout=StringIO())
+
+        self.assertFalse(Tag.objects.filter(pk=only_rules.pk).exists())
+        self.assertEqual(list(rule.tags.all()), [])
+        self.assertEqual(list(self.device.tags.all()), [shared])
+        self.assertTrue(IPRule.objects.filter(pk=rule.pk).exists())

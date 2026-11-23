@@ -11,8 +11,10 @@ How the plugin works and why, for anyone changing it.
 | `plan.py` | `plan_for()`: for a device or VM with no primary IPv4, the rule, the interface (new or existing) and the address. Reads only. |
 | `allocation.py` | Which address: the VLAN's prefixes and ranges, the reserved addresses of a prefix, and `free_number()`. Reads only. |
 | `naming.py` | The interface name and DNS name templates. |
-| `signals.py` | Disables a rule when its last device type, role or cluster is deleted (connected in `NextIPConfig.ready()`). With a request, NetBox's own `pre_delete` handler removes the entry from the rule first, so `rule_list_changed()` (m2m `post_remove`) tells a deletion from an edit by NetBox's internal `core.signals._signals_received.pre_delete`. |
+| `signals.py` | Disables a rule when its last device type, role or cluster is deleted (`connect()`, called from `NextIPConfig.ready()`, with a `dispatch_uid` per receiver). With a request, NetBox's own `pre_delete` handler removes the entry from the rule first, so `rule_list_changed()` (m2m `post_remove`) tells a deletion from an edit by NetBox's internal `core.signals._signals_received.pre_delete`. |
 | `assign.py` | `assign()`: what Add IP does. Plans again under the available-ips lock, creates or updates the interface, creates the address, sets the primary IP, then checks object permissions. |
+| `integrations.py` | Optional plugins. `has_change_approval()` checks `apps.is_installed()`; netbox-change-approval's `batch_scope` is imported only when it is enabled. |
+| `management/commands/prepare_nextip_uninstall.py` | Before removing the plugin: deletes NetBox's rows about IP rules and takes the IP rule object type off tags, custom fields, permissions and the like. |
 | `template_content.py`, `templates/.../inc/device_panel.html`, `inc/plan_rows.html` | The *Next IP* card on device and VM pages (`right_page()`). |
 | `templates/.../inc/add_ip_button.html` | *Add IP address* in the button bar (`buttons()`), while no interface has an IP. |
 | `views.py`, `urls.py`, `templates/.../add_ip_popup.html` | `AddIPView` (the button's POST), `AddIPPopupView` (the popup) and the rule views. |
@@ -155,6 +157,8 @@ Nothing is patched. The plugin uses, and would break if NetBox changed:
   `IPRange.get_child_ips()`.
 - `get_ancestors()` and `level` on regions, site groups and locations.
 - The `available-ips` advisory lock key and `core.signals.clear_events`.
+- The private `core.signals._signals_received` (see `signals.py`); without
+  it, only rules whose entries are deleted outside a request are disabled.
 - `PluginTemplateExtension.right_page()`, NetBox's `#htmx-modal` and `_changelog_message`.
 
 ## Tests

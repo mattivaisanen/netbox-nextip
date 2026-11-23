@@ -12,9 +12,9 @@ from utilities.forms.utils import get_field_value
 from utilities.forms.widgets import HTMXSelect
 from virtualization.models import Cluster
 
+from .allocation import containing_prefixes, parse_address
 from .choices import RuleObjectChoices
 from .models import IPRule
-from .allocation import containing_prefixes, parse_address
 from .plan import available_vlans, is_device, placed
 
 

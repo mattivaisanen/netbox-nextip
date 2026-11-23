@@ -46,8 +46,8 @@ stands for either.
 
 ## Requirements
 
-- NetBox **4.7** (tested with 4.7.0). NetBox refuses to load the plugin on
-  older versions.
+- NetBox **4.7 or later** (tested with 4.7.0). NetBox refuses to load the
+  plugin on older versions.
 - No other plugins. Works with
   [netbox-change-approval](https://github.com/mattivaisanen/netbox-change-approval)
   when it is installed.
@@ -93,6 +93,24 @@ python manage.py migrate netbox_nextip
 and restart NetBox. Upgrading from 0.2 removes the old rules and settings;
 see [CHANGELOG.md](CHANGELOG.md).
 
+## Uninstalling
+
+The plugin keeps everything in its own tables. To remove it cleanly, from
+your NetBox install:
+
+```bash
+python manage.py prepare_nextip_uninstall
+python manage.py migrate netbox_nextip zero
+```
+
+The first command deletes NetBox's rows about IP rules (change log
+entries, tag assignments, bookmarks and the like) and takes the IP rule
+object type off tags, custom fields, permissions and event rules; use
+`--dry-run` to see what it would remove. The second drops the plugin's
+tables. Then take `netbox_nextip` out of `PLUGINS`, restart NetBox and
+`pip uninstall netbox-nextip`. Interfaces and IP addresses made by *Add IP*
+are ordinary NetBox objects and stay.
+
 ## Rules
 
 Under **Plugins → IP Rules**. Rules are tried by priority (lowest first).
@@ -136,7 +154,7 @@ like any NetBox object.
 
 ## With netbox-change-approval
 
-IP rules are ordinary NetBox objects, so changes to them need approval like
+Used when `netbox_change_approval` is in `PLUGINS`. IP rules are ordinary NetBox objects, so changes to them need approval like
 any other object. One *Add IP* is one change request: the interface, the
 address and the primary IP are approved together. While making the address
 primary waits for approval, *Add IP* says so.
